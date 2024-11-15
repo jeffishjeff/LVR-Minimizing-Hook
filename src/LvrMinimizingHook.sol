@@ -6,13 +6,14 @@ import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {ILiquidityPool} from "./interfaces/ILiquidityPool.sol";
-import {PoolState} from "./types/PoolState.sol";
+import {PoolState, toPoolState} from "./types/PoolState.sol";
 import {BaseHook} from "./BaseHook.sol";
 
 /// @title LvrMinimizingHook
 contract LvrMinimizingHook is ILiquidityPool, BaseHook {
     error OnlyPoolManager();
     error InvalidHookAddress();
+    error AlreadyInitialized();
     error OnlyInitializeViaHook();
     error OnlyAddLiquidityViaHook();
     error OnlyRemoveLiquidityViaHook();
@@ -31,6 +32,23 @@ contract LvrMinimizingHook is ILiquidityPool, BaseHook {
         require(uint160(address(this)) & mask == mask, InvalidHookAddress());
 
         poolManager = poolManager_;
+    }
+
+    function initialize(InitializeParams memory params) external {
+        params.key.tickSpacing = 1; // note: only support key.tickSpacing == 1 for now
+        PoolId poolId = params.key.toId();
+        require(PoolState.unwrap(poolStates[poolId]) == bytes32(0), AlreadyInitialized());
+
+        int24 tick = poolManager.initialize(params.key, params.sqrtPriceX96);
+
+        poolStates[poolId] = toPoolState(
+            poolId,
+            params.liquidityRange,
+            params.liquidityThreshold,
+            params.arbitrageLiquidityPips,
+            tick - int16(params.liquidityRange),
+            tick + int16(params.liquidityRange)
+        );
     }
 
     function beforeInitialize(address sender, PoolKey calldata, uint160)
