@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
-import {PoolId} from "v4-core/types/PoolId.sol";
-
 type PoolState is bytes32;
 
 using PoolStateLibrary for PoolState global;
@@ -21,5 +19,15 @@ function toPoolState(uint16 liquidityRange, uint16 arbitrageLiquidityPips, int24
 
 /// @title PoolStateLibrary
 library PoolStateLibrary {
-// TODO: add getter functions as we go along
+    function tickLower(PoolState self) internal pure returns (int24 tickLower_) {
+        assembly {
+            tickLower_ := shr(232, shl(208, self))
+        }
+    }
+
+    function tickUpper(PoolState self) internal pure returns (int24 tickUpper_) {
+        assembly {
+            tickUpper_ := shr(232, shl(232, self))
+        }
+    }
 }

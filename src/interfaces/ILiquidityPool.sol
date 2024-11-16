@@ -13,6 +13,13 @@ interface ILiquidityPool {
     }
 
     function initialize(InitializeParams calldata params) external;
-    function mint(PoolKey calldata key, uint256 liquidity, address recipient) external payable;
-    function burn(PoolKey calldata key, uint256 liquidity, address recipient) external;
+
+    struct ModifyLiquidityData {
+        PoolKey key;
+        int256 liquidityDelta;
+        address sender;
+    }
+
+    function mint(PoolKey calldata key, uint256 liquidity) external payable;
+    function burn(PoolKey calldata key, uint256 liquidity) external;
 }
