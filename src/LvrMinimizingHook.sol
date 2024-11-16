@@ -23,6 +23,7 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
     error OnlyPoolManager();
     error InvalidHookAddress();
     error AlreadyInitialized();
+    error BlockAlreadyOpened();
     error OnlyInitializeViaHook();
     error OnlyAddLiquidityViaHook();
     error OnlyRemoveLiquidityViaHook();
@@ -38,6 +39,7 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
     using StateLibrary for IPoolManager;
     using TransientStateLibrary for IPoolManager;
 
+    uint256 private lastBlockOpened;
     IPoolManager private immutable poolManager;
     mapping(PoolId => PoolState) private poolStates;
 
@@ -82,6 +84,15 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
     function burn(PoolKey calldata key, uint256 liquidity) external {
         _burn(msg.sender, uint256(PoolId.unwrap(key.toId())), liquidity);
         poolManager.unlock(abi.encode(ModifyLiquidityData(key, -int256(liquidity), msg.sender)));
+    }
+
+    function open(PoolKey calldata key, uint160 newSqrtPriceX96) external payable {
+        require(block.number > lastBlockOpened, BlockAlreadyOpened());
+
+        uint128 liquidity = poolManager.getLiquidity(key.toId());
+        poolManager.unlock(abi.encode(ModifyLiquidityData(key, -int128(liquidity * 9 / 10), msg.sender)));
+
+        lastBlockOpened = block.number;
     }
 
     function unlockCallback(bytes calldata callbackData) external onlyPoolManager returns (bytes memory) {
