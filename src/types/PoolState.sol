@@ -7,18 +7,12 @@ type PoolState is bytes32;
 
 using PoolStateLibrary for PoolState global;
 
-function toPoolState(
-    PoolId poolId,
-    uint16 liquidityRange,
-    uint16 liquidityThreshold,
-    uint16 arbitrageLiquidityPips,
-    int24 tickLower,
-    int24 tickUpper
-) pure returns (PoolState state) {
+function toPoolState(uint16 liquidityRange, uint16 arbitrageLiquidityPips, int24 tickLower, int24 tickUpper)
+    pure
+    returns (PoolState state)
+{
     assembly {
-        state := shl(96, shr(96, poolId))
-        state := or(state, shl(80, liquidityRange))
-        state := or(state, shl(64, liquidityThreshold))
+        state := shl(64, liquidityRange)
         state := or(state, shl(48, arbitrageLiquidityPips))
         state := or(state, shl(24, tickLower))
         state := or(state, tickUpper)

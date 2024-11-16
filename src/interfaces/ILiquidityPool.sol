@@ -9,7 +9,6 @@ interface ILiquidityPool {
         PoolKey key;
         uint160 sqrtPriceX96;
         uint16 liquidityRange;
-        uint16 liquidityThreshold;
         uint16 arbitrageLiquidityPips;
     }
 

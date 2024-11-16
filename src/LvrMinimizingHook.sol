@@ -44,9 +44,7 @@ contract LvrMinimizingHook is ILiquidityPool, BaseHook, ERC6909Claims {
         int24 tick = poolManager.initialize(params.key, params.sqrtPriceX96);
 
         poolStates[poolId] = toPoolState(
-            poolId,
             params.liquidityRange,
-            params.liquidityThreshold,
             params.arbitrageLiquidityPips,
             tick - int16(params.liquidityRange),
             tick + int16(params.liquidityRange)
