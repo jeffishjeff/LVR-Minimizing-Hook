@@ -72,7 +72,7 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
     }
 
     function mint(PoolKey calldata key, uint256 liquidity) external payable {
-        poolManager.unlock(abi.encode(ModifyLiquidityData(key, int256(liquidity), msg.sender)));
+        poolManager.unlock(abi.encode(ModifyLiquidityData(key, int256(liquidity), msg.sender, 0)));
         _mint(msg.sender, uint256(PoolId.unwrap(key.toId())), liquidity);
 
         uint256 leftover = address(this).balance;
@@ -83,14 +83,21 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
 
     function burn(PoolKey calldata key, uint256 liquidity) external {
         _burn(msg.sender, uint256(PoolId.unwrap(key.toId())), liquidity);
-        poolManager.unlock(abi.encode(ModifyLiquidityData(key, -int256(liquidity), msg.sender)));
+        poolManager.unlock(abi.encode(ModifyLiquidityData(key, -int256(liquidity), msg.sender, 0)));
     }
 
     function open(PoolKey calldata key, uint160 newSqrtPriceX96) external payable {
         require(block.number > lastBlockOpened, BlockAlreadyOpened());
 
         uint128 liquidity = poolManager.getLiquidity(key.toId());
-        poolManager.unlock(abi.encode(ModifyLiquidityData(key, -int128(liquidity * 9 / 10), msg.sender)));
+        poolManager.unlock(
+            abi.encode(ModifyLiquidityData(key, -int128(liquidity * 9 / 10), msg.sender, newSqrtPriceX96))
+        );
+
+        uint256 leftover = address(this).balance;
+        if (leftover > 0) {
+            CurrencyLibrary.ADDRESS_ZERO.transfer(msg.sender, leftover);
+        }
 
         lastBlockOpened = block.number;
     }
@@ -105,10 +112,33 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
             ""
         );
 
-        if (delta.amount0() < 0) data.key.currency0.settle(poolManager, data.sender, uint128(-delta.amount0()), false);
-        if (delta.amount1() < 0) data.key.currency1.settle(poolManager, data.sender, uint128(-delta.amount1()), false);
-        if (delta.amount0() > 0) data.key.currency0.take(poolManager, data.sender, uint128(delta.amount0()), false);
-        if (delta.amount1() > 0) data.key.currency1.take(poolManager, data.sender, uint128(delta.amount1()), false);
+        if (data.newSqrtPriceX96 == 0) {
+            if (delta.amount0() < 0) {
+                data.key.currency0.settle(poolManager, data.sender, uint128(-delta.amount0()), false);
+            }
+            if (delta.amount1() < 0) {
+                data.key.currency1.settle(poolManager, data.sender, uint128(-delta.amount1()), false);
+            }
+            if (delta.amount0() > 0) data.key.currency0.take(poolManager, data.sender, uint128(delta.amount0()), false);
+            if (delta.amount1() > 0) data.key.currency1.take(poolManager, data.sender, uint128(delta.amount1()), false);
+        } else {
+            (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(data.key.toId());
+
+            delta = poolManager.swap(
+                data.key,
+                IPoolManager.SwapParams(data.newSqrtPriceX96 < sqrtPriceX96, type(int256).min, data.newSqrtPriceX96),
+                ""
+            );
+
+            if (delta.amount0() < 0) {
+                data.key.currency0.settle(poolManager, data.sender, uint128(-delta.amount0()), false);
+            }
+            if (delta.amount1() < 0) {
+                data.key.currency1.settle(poolManager, data.sender, uint128(-delta.amount1()), false);
+            }
+            if (delta.amount0() > 0) data.key.currency0.take(poolManager, data.sender, uint128(delta.amount0()), false);
+            if (delta.amount1() > 0) data.key.currency1.take(poolManager, data.sender, uint128(delta.amount1()), false);
+        }
 
         return "";
     }

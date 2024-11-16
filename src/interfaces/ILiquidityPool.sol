@@ -18,6 +18,7 @@ interface ILiquidityPool {
         PoolKey key;
         int256 liquidityDelta;
         address sender;
+        uint160 newSqrtPriceX96;
     }
 
     function mint(PoolKey calldata key, uint256 liquidity) external payable;
