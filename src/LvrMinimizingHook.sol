@@ -5,13 +5,17 @@ import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {TransientStateLibrary} from "v4-core/libraries/TransientStateLibrary.sol";
+import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
+import {LiquidityAmounts} from "v4-core/test/utils/LiquidityAmounts.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {ERC6909Claims} from "v4-core/ERC6909Claims.sol";
 import {ILiquidityPool} from "./interfaces/ILiquidityPool.sol";
-import {PoolState, toPoolState} from "./types/PoolState.sol";
 import {BaseHook} from "./BaseHook.sol";
 
 /// @title LvrMinimizingHook
@@ -22,6 +26,17 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
     error OnlyInitializeViaHook();
     error OnlyAddLiquidityViaHook();
     error OnlyRemoveLiquidityViaHook();
+
+    struct PoolState {
+        uint16 liquidityRange;
+        uint16 arbitrageLiquidityPips;
+        int24 tickLower;
+        int24 tickUpper;
+    }
+
+    using CurrencySettler for Currency;
+    using StateLibrary for IPoolManager;
+    using TransientStateLibrary for IPoolManager;
 
     IPoolManager private immutable poolManager;
     mapping(PoolId => PoolState) private poolStates;
@@ -42,11 +57,11 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
     function initialize(InitializeParams memory params) external {
         params.key.tickSpacing = 1; // note: only support key.tickSpacing == 1 for now
         PoolId poolId = params.key.toId();
-        require(PoolState.unwrap(poolStates[poolId]) == bytes32(0), AlreadyInitialized());
+        require(poolStates[poolId].tickLower == 0 && poolStates[poolId].tickUpper == 0, AlreadyInitialized());
 
         int24 tick = poolManager.initialize(params.key, params.sqrtPriceX96);
 
-        poolStates[poolId] = toPoolState(
+        poolStates[poolId] = PoolState(
             params.liquidityRange,
             params.arbitrageLiquidityPips,
             tick - int16(params.liquidityRange),
@@ -71,18 +86,18 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
 
     function unlockCallback(bytes calldata callbackData) external onlyPoolManager returns (bytes memory) {
         ModifyLiquidityData memory data = abi.decode(callbackData, (ModifyLiquidityData));
-        PoolState poolState = poolStates[data.key.toId()];
+        PoolState memory poolState = poolStates[data.key.toId()];
 
         (BalanceDelta delta,) = poolManager.modifyLiquidity(
             data.key,
-            IPoolManager.ModifyLiquidityParams(poolState.tickLower(), poolState.tickUpper(), data.liquidityDelta, ""),
+            IPoolManager.ModifyLiquidityParams(poolState.tickLower, poolState.tickUpper, data.liquidityDelta, ""),
             ""
         );
 
-        if (delta.amount0() < 0) _settle(data.key.currency0, uint128(-delta.amount0()), data.sender);
-        if (delta.amount1() < 0) _settle(data.key.currency1, uint128(-delta.amount1()), data.sender);
-        if (delta.amount0() > 0) _take(data.key.currency0, uint128(delta.amount0()), data.sender);
-        if (delta.amount1() > 0) _take(data.key.currency1, uint128(delta.amount1()), data.sender);
+        if (delta.amount0() < 0) data.key.currency0.settle(poolManager, data.sender, uint128(-delta.amount0()), false);
+        if (delta.amount1() < 0) data.key.currency1.settle(poolManager, data.sender, uint128(-delta.amount1()), false);
+        if (delta.amount0() > 0) data.key.currency0.take(poolManager, data.sender, uint128(delta.amount0()), false);
+        if (delta.amount1() > 0) data.key.currency1.take(poolManager, data.sender, uint128(delta.amount1()), false);
 
         return "";
     }
@@ -123,21 +138,52 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
 
     // TODO: before/after swap
 
-    function _settle(Currency currency, uint256 amount, address payer) private {
-        if (currency.isAddressZero()) {
-            poolManager.settle{value: amount}();
-        } else {
-            poolManager.sync(currency);
-            if (payer == address(this)) {
-                IERC20Minimal(Currency.unwrap(currency)).transfer(address(poolManager), amount);
-            } else {
-                IERC20Minimal(Currency.unwrap(currency)).transferFrom(payer, address(poolManager), amount);
-            }
-            poolManager.settle();
-        }
-    }
+    function afterSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata)
+        external
+        override
+        onlyPoolManager
+        returns (bytes4, int128)
+    {
+        PoolId poolId = key.toId();
 
-    function _take(Currency currency, uint256 amount, address recipient) private {
-        poolManager.take(currency, recipient, amount);
+        PoolState memory poolState = poolStates[poolId];
+        uint128 liquidity = poolManager.getLiquidity(poolId);
+        poolManager.modifyLiquidity(
+            key,
+            IPoolManager.ModifyLiquidityParams(poolState.tickLower, poolState.tickUpper, -int128(liquidity), ""),
+            ""
+        );
+        uint256 amount0 = uint256(poolManager.currencyDelta(address(this), key.currency0));
+        uint256 amount1 = uint256(poolManager.currencyDelta(address(this), key.currency1));
+
+        (uint160 sqrtPriceX96, int24 tick,,) = poolManager.getSlot0(poolId);
+        uint160 lowerSqrtPriceX96 = TickMath.getSqrtPriceAtTick(tick - int16(poolState.liquidityRange));
+        uint160 upperSqrtPriceX96 = TickMath.getSqrtPriceAtTick(tick + int16(poolState.liquidityRange));
+        uint128 liquidity0 = LiquidityAmounts.getLiquidityForAmount0(sqrtPriceX96, upperSqrtPriceX96, amount0);
+        uint128 liquidity1 = LiquidityAmounts.getLiquidityForAmount1(sqrtPriceX96, lowerSqrtPriceX96, amount1);
+
+        if (liquidity0 > liquidity1) {
+            upperSqrtPriceX96 = uint160(sqrtPriceX96 * liquidity1 / (liquidity1 - amount0 * sqrtPriceX96));
+        } else if (liquidity1 > liquidity0) {
+            lowerSqrtPriceX96 = uint160((sqrtPriceX96 * liquidity0 - amount1) / liquidity0);
+        }
+
+        int24 tickLower = TickMath.getTickAtSqrtPrice(lowerSqrtPriceX96);
+        int24 tickUpper = TickMath.getTickAtSqrtPrice(upperSqrtPriceX96);
+        poolStates[poolId].tickLower = tickLower;
+        poolStates[poolId].tickUpper = tickUpper;
+
+        (BalanceDelta delta,) = poolManager.modifyLiquidity(
+            key,
+            IPoolManager.ModifyLiquidityParams(
+                tickLower, tickUpper, int128(liquidity0 > liquidity1 ? liquidity1 : liquidity0), ""
+            ),
+            ""
+        );
+
+        poolManager.clear(key.currency0, amount0 - uint128(-delta.amount0()));
+        poolManager.clear(key.currency1, amount1 - uint128(-delta.amount1()));
+
+        return (this.afterSwap.selector, 0);
     }
 }
