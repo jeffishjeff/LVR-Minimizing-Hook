@@ -3,14 +3,16 @@ pragma solidity =0.8.28;
 
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {ERC6909Claims} from "v4-core/ERC6909Claims.sol";
 import {ILiquidityPool} from "./interfaces/ILiquidityPool.sol";
 import {PoolState, toPoolState} from "./types/PoolState.sol";
 import {BaseHook} from "./BaseHook.sol";
 
 /// @title LvrMinimizingHook
-contract LvrMinimizingHook is ILiquidityPool, BaseHook {
+contract LvrMinimizingHook is ILiquidityPool, BaseHook, ERC6909Claims {
     error OnlyPoolManager();
     error InvalidHookAddress();
     error AlreadyInitialized();
@@ -49,6 +51,27 @@ contract LvrMinimizingHook is ILiquidityPool, BaseHook {
             tick - int16(params.liquidityRange),
             tick + int16(params.liquidityRange)
         );
+    }
+
+    function mint(PoolKey calldata key, uint256 liquidity, address recipient) external payable {
+        PoolId poolId = key.toId();
+        bytes memory data = abi.encode(); // TODO: create callback data
+
+        poolManager.unlock(data);
+        _mint(recipient, uint256(PoolId.unwrap(poolId)), liquidity);
+
+        uint256 leftover = address(this).balance;
+        if (leftover > 0) {
+            CurrencyLibrary.ADDRESS_ZERO.transfer(msg.sender, leftover);
+        }
+    }
+
+    function burn(PoolKey calldata key, uint256 liquidity, address recipient) external {
+        PoolId poolId = key.toId();
+        bytes memory data = abi.encode(); // TODO: create callback data
+
+        poolManager.unlock(data);
+        _burn(recipient, uint256(PoolId.unwrap(poolId)), liquidity);
     }
 
     function beforeInitialize(address sender, PoolKey calldata, uint160)

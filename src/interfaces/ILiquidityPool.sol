@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 import {PoolKey} from "v4-core/types/PoolKey.sol";
@@ -14,4 +14,6 @@ interface ILiquidityPool {
     }
 
     function initialize(InitializeParams calldata params) external;
+    function mint(PoolKey calldata key, uint256 liquidity, address recipient) external payable;
+    function burn(PoolKey calldata key, uint256 liquidity, address recipient) external;
 }
