@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
+import {BrevisApp} from "brevis-contracts/sdk/apps/framework/BrevisApp.sol";
 import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
@@ -11,6 +12,7 @@ import {TransientStateLibrary} from "v4-core/libraries/TransientStateLibrary.sol
 import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
 import {LiquidityAmounts} from "v4-core/test/utils/LiquidityAmounts.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {BeforeSwapDelta} from "v4-core/types/BeforeSwapDelta.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
@@ -19,10 +21,12 @@ import {ILiquidityPool} from "./interfaces/ILiquidityPool.sol";
 import {BaseHook} from "./BaseHook.sol";
 
 /// @title LvrMinimizingHook
-contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909Claims {
+contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909Claims, BrevisApp {
     error OnlyPoolManager();
     error InvalidHookAddress();
+    error InvalidVerifyingKey();
     error AlreadyInitialized();
+    error BlockNotOpened();
     error BlockAlreadyOpened();
     error OnlyInitializeViaHook();
     error OnlyAddLiquidityViaHook();
@@ -39,6 +43,8 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
     using StateLibrary for IPoolManager;
     using TransientStateLibrary for IPoolManager;
 
+    bytes32 private vkHash;
+    uint256 private variance;
     uint256 private lastBlockOpened;
     IPoolManager private immutable poolManager;
     mapping(PoolId => PoolState) private poolStates;
@@ -48,7 +54,7 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
         _;
     }
 
-    constructor(IPoolManager poolManager_) {
+    constructor(IPoolManager poolManager_, address brevisReques_) BrevisApp(brevisReques_) {
         uint160 mask = Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
             | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG;
         require(uint160(address(this)) & mask == mask, InvalidHookAddress());
@@ -90,6 +96,8 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
         require(block.number > lastBlockOpened, BlockAlreadyOpened());
 
         uint128 liquidity = poolManager.getLiquidity(key.toId());
+        lastBlockOpened = block.number;
+
         poolManager.unlock(
             abi.encode(ModifyLiquidityData(key, -int128(liquidity * 9 / 10), msg.sender, newSqrtPriceX96))
         );
@@ -98,8 +106,6 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
         if (leftover > 0) {
             CurrencyLibrary.ADDRESS_ZERO.transfer(msg.sender, leftover);
         }
-
-        lastBlockOpened = block.number;
     }
 
     function unlockCallback(bytes calldata callbackData) external onlyPoolManager returns (bytes memory) {
@@ -177,7 +183,17 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
         return this.beforeRemoveLiquidity.selector;
     }
 
-    // TODO: before/after swap
+    function beforeSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, bytes calldata)
+        external
+        view
+        override
+        onlyPoolManager
+        returns (bytes4, BeforeSwapDelta, uint24)
+    {
+        require(block.number == lastBlockOpened, BlockNotOpened());
+
+        return (this.beforeSwap.selector, BeforeSwapDelta.wrap(0), 0);
+    }
 
     function afterSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata)
         external
@@ -226,5 +242,15 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
         poolManager.clear(key.currency1, amount1 - uint128(-delta.amount1()));
 
         return (this.afterSwap.selector, 0);
+    }
+
+    function handleProofResult(bytes32 vkHash_, bytes calldata circuitOutput_) internal override {
+        require(vkHash == vkHash_, InvalidVerifyingKey());
+
+        variance = uint248(bytes31(circuitOutput_[0:31]));
+    }
+
+    function setVkHash(bytes32 vkHash_) external {
+        vkHash = vkHash_;
     }
 }

@@ -23,6 +23,4 @@ interface ILiquidityPool {
 
     function mint(PoolKey calldata key, uint256 liquidity) external payable;
     function burn(PoolKey calldata key, uint256 liquidity) external;
-
-    function open(PoolKey calldata key, uint160 newSqrtPriceX96) external payable;
 }
