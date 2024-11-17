@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity =0.8.28;
+pragma solidity =0.8.26;
 
 import {BrevisApp} from "brevis-contracts/sdk/apps/framework/BrevisApp.sol";
 import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol";
@@ -9,8 +9,8 @@ import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {TransientStateLibrary} from "v4-core/libraries/TransientStateLibrary.sol";
-import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
-import {LiquidityAmounts} from "v4-core/test/utils/LiquidityAmounts.sol";
+import {CurrencySettler} from "../lib/v4-core/test/utils/CurrencySettler.sol";
+import {LiquidityAmounts} from "../lib/v4-core/test/utils/LiquidityAmounts.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {BeforeSwapDelta} from "v4-core/types/BeforeSwapDelta.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
