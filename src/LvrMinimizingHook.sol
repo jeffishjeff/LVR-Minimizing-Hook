@@ -43,6 +43,8 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
     using StateLibrary for IPoolManager;
     using TransientStateLibrary for IPoolManager;
 
+    uint128 private constant PIPS_DENOMINATOR = 10_000;
+
     bytes32 private vkHash;
     uint256 private variance;
     uint256 private lastBlockOpened;
@@ -95,11 +97,19 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
     function open(PoolKey calldata key, uint160 newSqrtPriceX96) external payable {
         require(block.number > lastBlockOpened, BlockAlreadyOpened());
 
-        uint128 liquidity = poolManager.getLiquidity(key.toId());
+        PoolId poolId = key.toId();
+        uint128 liquidity = poolManager.getLiquidity(poolId);
         lastBlockOpened = block.number;
 
         poolManager.unlock(
-            abi.encode(ModifyLiquidityData(key, -int128(liquidity * 9 / 10), msg.sender, newSqrtPriceX96))
+            abi.encode(
+                ModifyLiquidityData(
+                    key,
+                    -int128(liquidity * poolStates[poolId].arbitrageLiquidityPips / PIPS_DENOMINATOR),
+                    msg.sender,
+                    newSqrtPriceX96
+                )
+            )
         );
 
         uint256 leftover = address(this).balance;
