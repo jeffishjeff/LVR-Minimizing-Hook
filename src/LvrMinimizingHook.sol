@@ -154,6 +154,9 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
             }
             if (delta.amount0() > 0) data.key.currency0.take(poolManager, data.sender, uint128(delta.amount0()), false);
             if (delta.amount1() > 0) data.key.currency1.take(poolManager, data.sender, uint128(delta.amount1()), false);
+
+            poolManager.clear(data.key.currency0, uint256(poolManager.currencyDelta(address(this), data.key.currency0)));
+            poolManager.clear(data.key.currency1, uint256(poolManager.currencyDelta(address(this), data.key.currency1)));
         }
 
         return "";
@@ -247,9 +250,6 @@ contract LvrMinimizingHook is ILiquidityPool, IUnlockCallback, BaseHook, ERC6909
             ),
             ""
         );
-
-        poolManager.clear(key.currency0, amount0 - uint128(-delta.amount0()));
-        poolManager.clear(key.currency1, amount1 - uint128(-delta.amount1()));
 
         return (this.afterSwap.selector, 0);
     }
